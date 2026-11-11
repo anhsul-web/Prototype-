@@ -248,8 +248,10 @@ class BluetoothHidService(context: Context) {
     private fun restoreAdapterName() {
         val original = prefs.getString(PREF_ORIGINAL_NAME, null) ?: return
         val bt = adapter ?: return
-        // The user renamed Bluetooth meanwhile: keep their choice.
-        if (bt.name != SPOOF_NAME) {
+        // The user renamed Bluetooth meanwhile: keep their choice. (Name still == original may mean
+        // the async spoof setName hasn't landed yet, so restore anyway to override it.)
+        val current = bt.name
+        if (current != SPOOF_NAME && current != original) {
             prefs.edit().remove(PREF_ORIGINAL_NAME).apply()
             return
         }
