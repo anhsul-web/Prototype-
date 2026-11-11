@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothHidDevice
+import android.bluetooth.BluetoothHidDeviceAppQosSettings
 import android.bluetooth.BluetoothHidDeviceAppSdpSettings
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
@@ -49,6 +50,13 @@ class BluetoothHidService(context: Context) {
         HidDescriptor.REPORT_MAP
     )
 
+    // Same outgoing QoS as Google's WearMouse sample; some hosts drop input without it.
+    private val qosOut = BluetoothHidDeviceAppQosSettings(
+        BluetoothHidDeviceAppQosSettings.SERVICE_BEST_EFFORT,
+        800, 9, 0, 11250,
+        BluetoothHidDeviceAppQosSettings.MAX
+    )
+
     private val hidCallback = object : BluetoothHidDevice.Callback() {
         override fun onAppStatusChanged(pluggedDevice: BluetoothDevice?, registered: Boolean) {
             Log.d(TAG, "onAppStatusChanged registered=$registered plugged=$pluggedDevice")
@@ -71,12 +79,22 @@ class BluetoothHidService(context: Context) {
         }
 
         override fun onGetReport(device: BluetoothDevice, type: Byte, id: Byte, bufferSize: Int) {
+            Log.d(TAG, "onGetReport type=$type id=$id")
             val size = when (id.toInt()) {
+                HidDescriptor.ID_KEYBOARD -> HidDescriptor.KEYBOARD_REPORT_SIZE
                 HidDescriptor.ID_MOUSE -> HidDescriptor.MOUSE_REPORT_SIZE
                 HidDescriptor.ID_GAMEPAD -> HidDescriptor.GAMEPAD_REPORT_SIZE
-                else -> HidDescriptor.KEYBOARD_REPORT_SIZE
+                else -> 0
             }
-            hidDevice?.replyReport(device, type, id, ByteArray(size))
+            if (type == BluetoothHidDevice.REPORT_TYPE_INPUT && size > 0) {
+                hidDevice?.replyReport(device, type, id, ByteArray(size))
+            } else {
+                hidDevice?.reportError(device, BluetoothHidDevice.ERROR_RSP_INVALID_RPT_ID)
+            }
+        }
+
+        override fun onSetProtocol(device: BluetoothDevice, protocol: Byte) {
+            Log.d(TAG, "onSetProtocol $protocol")
         }
 
         override fun onSetReport(device: BluetoothDevice, type: Byte, id: Byte, data: ByteArray) {
@@ -93,7 +111,7 @@ class BluetoothHidService(context: Context) {
                 return
             }
             hidDevice = device
-            val ok = device.registerApp(sdpSettings, null, null, callbackExecutor, hidCallback)
+            val ok = device.registerApp(sdpSettings, null, qosOut, callbackExecutor, hidCallback)
             Log.d(TAG, "registerApp -> $ok")
         }
 
@@ -139,7 +157,7 @@ class BluetoothHidService(context: Context) {
     private fun sendNow(id: Int, report: ByteArray) {
         val device = hidDevice ?: return
         val host = hostDevice ?: return
-        device.sendReport(host, id, report)
+        if (!device.sendReport(host, id, report)) Log.w(TAG, "sendReport failed id=$id")
     }
 
     // ---------- Mouse ----------
