@@ -2,11 +2,17 @@ package com.prototype.hidremote
 
 /**
  * USB HID Report Map exposed through the Bluetooth SDP record.
- * Report ID 1 = boot-style keyboard (8 bytes), Report ID 2 = relative mouse (4 bytes).
+ * Report ID 1 = boot-style keyboard (8 bytes), Report ID 2 = relative mouse with vertical wheel
+ * and horizontal AC Pan (5 bytes), Report ID 3 = gamepad with 16 buttons + X/Y/Z/Rz sticks (6 bytes).
  */
 object HidDescriptor {
     const val ID_KEYBOARD = 1
     const val ID_MOUSE = 2
+    const val ID_GAMEPAD = 3
+
+    const val KEYBOARD_REPORT_SIZE = 8
+    const val MOUSE_REPORT_SIZE = 5
+    const val GAMEPAD_REPORT_SIZE = 6
 
     val REPORT_MAP: ByteArray = byteArrayOf(
         // ---------- Keyboard ----------
@@ -71,7 +77,39 @@ object HidDescriptor {
         0x75, 0x08,                   //     Report Size (8)
         0x95.toByte(), 0x03,          //     Report Count (3)
         0x81.toByte(), 0x06,          //     Input (Data, Variable, Relative)
+        0x05, 0x0C,                   //     Usage Page (Consumer)
+        0x0A, 0x38, 0x02,             //     Usage (AC Pan) - horizontal scroll
+        0x15, 0x81.toByte(),          //     Logical Minimum (-127)
+        0x25, 0x7F,                   //     Logical Maximum (127)
+        0x75, 0x08,                   //     Report Size (8)
+        0x95.toByte(), 0x01,          //     Report Count (1)
+        0x81.toByte(), 0x06,          //     Input (Data, Variable, Relative)
         0xC0.toByte(),                //   End Collection
+        0xC0.toByte(),                // End Collection
+
+        // ---------- Gamepad ----------
+        0x05, 0x01,                   // Usage Page (Generic Desktop)
+        0x09, 0x05,                   // Usage (Game Pad)
+        0xA1.toByte(), 0x01,          // Collection (Application)
+        0x85.toByte(), ID_GAMEPAD.toByte(), //   Report ID (3)
+        0x05, 0x09,                   //   Usage Page (Buttons)
+        0x19, 0x01,                   //   Usage Minimum (1)
+        0x29, 0x10,                   //   Usage Maximum (16)
+        0x15, 0x00,                   //   Logical Minimum (0)
+        0x25, 0x01,                   //   Logical Maximum (1)
+        0x75, 0x01,                   //   Report Size (1)
+        0x95.toByte(), 0x10,          //   Report Count (16)
+        0x81.toByte(), 0x02,          //   Input (Data, Variable, Absolute) - buttons
+        0x05, 0x01,                   //   Usage Page (Generic Desktop)
+        0x09, 0x30,                   //   Usage (X)  - left stick
+        0x09, 0x31,                   //   Usage (Y)  - left stick
+        0x09, 0x32,                   //   Usage (Z)  - right stick
+        0x09, 0x35,                   //   Usage (Rz) - right stick
+        0x15, 0x81.toByte(),          //   Logical Minimum (-127)
+        0x25, 0x7F,                   //   Logical Maximum (127)
+        0x75, 0x08,                   //   Report Size (8)
+        0x95.toByte(), 0x04,          //   Report Count (4)
+        0x81.toByte(), 0x02,          //   Input (Data, Variable, Absolute) - axes
         0xC0.toByte()                 // End Collection
     )
 }

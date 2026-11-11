@@ -71,7 +71,11 @@ class BluetoothHidService(context: Context) {
         }
 
         override fun onGetReport(device: BluetoothDevice, type: Byte, id: Byte, bufferSize: Int) {
-            val size = if (id.toInt() == HidDescriptor.ID_MOUSE) MOUSE_REPORT_SIZE else KEYBOARD_REPORT_SIZE
+            val size = when (id.toInt()) {
+                HidDescriptor.ID_MOUSE -> HidDescriptor.MOUSE_REPORT_SIZE
+                HidDescriptor.ID_GAMEPAD -> HidDescriptor.GAMEPAD_REPORT_SIZE
+                else -> HidDescriptor.KEYBOARD_REPORT_SIZE
+            }
             hidDevice?.replyReport(device, type, id, ByteArray(size))
         }
 
@@ -124,53 +128,94 @@ class BluetoothHidService(context: Context) {
         reportExecutor.shutdown()
     }
 
-    private fun send(id: Int, report: ByteArray) {
+    private fun send(id: Int, report: ByteArray) = enqueue { sendNow(id, report) }
+
+    private fun enqueue(block: () -> Unit) {
+        if (hostDevice == null || reportExecutor.isShutdown) return
+        reportExecutor.execute(block)
+    }
+
+    /** Must run on [reportExecutor]. */
+    private fun sendNow(id: Int, report: ByteArray) {
         val device = hidDevice ?: return
         val host = hostDevice ?: return
-        if (reportExecutor.isShutdown) return
-        reportExecutor.execute { device.sendReport(host, id, report) }
+        device.sendReport(host, id, report)
     }
 
     // ---------- Mouse ----------
 
-    fun sendMouse(buttons: Int, dx: Int, dy: Int, wheel: Int = 0) {
+    fun sendMouse(buttons: Int, dx: Int, dy: Int, wheel: Int = 0, pan: Int = 0) {
         send(
             HidDescriptor.ID_MOUSE,
             byteArrayOf(
                 (buttons and 0x07).toByte(),
                 dx.coerceIn(-127, 127).toByte(),
                 dy.coerceIn(-127, 127).toByte(),
-                wheel.coerceIn(-127, 127).toByte()
+                wheel.coerceIn(-127, 127).toByte(),
+                pan.coerceIn(-127, 127).toByte()
             )
         )
     }
 
     fun mouseMove(dx: Int, dy: Int) = sendMouse(0, dx, dy)
 
-    fun leftClick() {
-        sendMouse(BUTTON_LEFT, 0, 0)
+    fun leftClick() = click(BUTTON_LEFT)
+
+    fun rightClick() = click(BUTTON_RIGHT)
+
+    private fun click(button: Int) {
+        sendMouse(button, 0, 0)
         sendMouse(0, 0, 0)
     }
+
+    /** [wheel] > 0 scrolls up, [pan] > 0 scrolls right (one unit per detent). */
+    fun scroll(wheel: Int, pan: Int) = sendMouse(0, 0, 0, wheel, pan)
 
     // ---------- Keyboard ----------
 
     fun sendKeyboard(modifiers: Int, keyCode: Int) {
-        send(
-            HidDescriptor.ID_KEYBOARD,
-            byteArrayOf(modifiers.toByte(), 0, keyCode.toByte(), 0, 0, 0, 0, 0)
-        )
+        send(HidDescriptor.ID_KEYBOARD, keyboardReport(modifiers, keyCode))
     }
 
+    private fun keyboardReport(modifiers: Int, keyCode: Int) =
+        byteArrayOf(modifiers.toByte(), 0, keyCode.toByte(), 0, 0, 0, 0, 0)
+
     /** Key down followed immediately by key up (all keys released). */
-    fun pressKey(stroke: KeyStroke) {
-        sendKeyboard(stroke.modifiers, stroke.keyCode)
-        sendKeyboard(0, 0)
+    fun pressKey(stroke: KeyStroke) = pressKeys(listOf(stroke))
+
+    /** Sends each stroke as key down -> key up, pausing [KEY_DELAY_MS] between strokes. */
+    fun pressKeys(strokes: List<KeyStroke>) {
+        if (strokes.isEmpty()) return
+        enqueue {
+            strokes.forEachIndexed { i, stroke ->
+                if (i > 0) Thread.sleep(KEY_DELAY_MS)
+                sendNow(HidDescriptor.ID_KEYBOARD, keyboardReport(stroke.modifiers, stroke.keyCode))
+                sendNow(HidDescriptor.ID_KEYBOARD, keyboardReport(0, 0))
+            }
+        }
+    }
+
+    // ---------- Gamepad ----------
+
+    /** [buttons] bit n = HID button n+1; axes are -127..127 (Y/Rz positive = down). */
+    fun sendGamepad(buttons: Int, x: Int, y: Int, z: Int, rz: Int) {
+        send(
+            HidDescriptor.ID_GAMEPAD,
+            byteArrayOf(
+                (buttons and 0xFF).toByte(),
+                ((buttons shr 8) and 0xFF).toByte(),
+                x.coerceIn(-127, 127).toByte(),
+                y.coerceIn(-127, 127).toByte(),
+                z.coerceIn(-127, 127).toByte(),
+                rz.coerceIn(-127, 127).toByte()
+            )
+        )
     }
 
     companion object {
         private const val TAG = "BluetoothHidService"
         const val BUTTON_LEFT = 0x01
-        private const val MOUSE_REPORT_SIZE = 4
-        private const val KEYBOARD_REPORT_SIZE = 8
+        const val BUTTON_RIGHT = 0x02
+        private const val KEY_DELAY_MS = 10L
     }
 }
