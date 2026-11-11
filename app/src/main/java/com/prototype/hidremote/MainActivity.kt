@@ -232,16 +232,20 @@ fun Trackpad(hid: BluetoothHidService) {
     )
 }
 
-/** Non-empty buffer so that backspace always produces a detectable deletion. */
-private const val SENTINEL = "                "
+/**
+ * Non-empty buffers so that backspace always produces a detectable deletion. The field alternates
+ * between two distinct sentinels so every reset is a real state change that resyncs the IME.
+ */
+private const val SENTINEL_A = "                "
+private const val SENTINEL_B = "                 "
 
-private fun sentinelValue() = TextFieldValue(SENTINEL, TextRange(SENTINEL.length))
+private fun sentinelValue(text: String) = TextFieldValue(text, TextRange(text.length))
 
 @Composable
 fun KeyboardCapture(hid: BluetoothHidService) {
     val focusRequester = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
-    var value by remember { mutableStateOf(sentinelValue()) }
+    var value by remember { mutableStateOf(sentinelValue(SENTINEL_A)) }
 
     LaunchedEffect(Unit) {
         focusRequester.requestFocus()
@@ -262,19 +266,24 @@ fun KeyboardCapture(hid: BluetoothHidService) {
         BasicTextField(
             value = value,
             onValueChange = { new ->
+                val previous = value.text
                 val text = new.text
+                if (text == previous) {
+                    value = new
+                    return@BasicTextField
+                }
                 var common = 0
-                while (common < text.length && common < SENTINEL.length &&
-                    text[common] == SENTINEL[common]
+                while (common < text.length && common < previous.length &&
+                    text[common] == previous[common]
                 ) common++
-                repeat(SENTINEL.length - common) {
+                repeat(previous.length - common) {
                     hid.pressKey(KeyStroke(0, HidKeyMap.KEY_BACKSPACE))
                 }
                 text.substring(common).forEach { c ->
                     HidKeyMap.forChar(c)?.let(hid::pressKey)
                 }
                 // Swallow the edit so nothing is ever rendered/accumulated.
-                value = sentinelValue()
+                value = sentinelValue(if (previous == SENTINEL_A) SENTINEL_B else SENTINEL_A)
             },
             keyboardOptions = KeyboardOptions(
                 autoCorrectEnabled = false,
