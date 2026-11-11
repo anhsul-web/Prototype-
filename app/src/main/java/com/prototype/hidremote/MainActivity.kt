@@ -239,6 +239,15 @@ fun Trackpad(hid: BluetoothHidService) {
 private const val SENTINEL_A = "                "
 private const val SENTINEL_B = "                 "
 
+private val NON_TEXT_KEYS = setOf(
+    android.view.KeyEvent.KEYCODE_DPAD_UP,
+    android.view.KeyEvent.KEYCODE_DPAD_DOWN,
+    android.view.KeyEvent.KEYCODE_DPAD_LEFT,
+    android.view.KeyEvent.KEYCODE_DPAD_RIGHT,
+    android.view.KeyEvent.KEYCODE_ESCAPE,
+    android.view.KeyEvent.KEYCODE_FORWARD_DEL
+)
+
 private fun sentinelValue(text: String) = TextFieldValue(text, TextRange(text.length))
 
 @Composable
@@ -294,10 +303,10 @@ fun KeyboardCapture(hid: BluetoothHidService) {
                 .alpha(0f)
                 .focusRequester(focusRequester)
                 .onPreviewKeyEvent { event ->
-                    // Hardware keys carrying Ctrl/Alt/Meta modifiers bypass the text diff.
+                    // Non-text keys and keys carrying Ctrl/Alt/Meta modifiers bypass the text diff.
                     val native = event.nativeKeyEvent
                     val hasModifier = native.isCtrlPressed || native.isAltPressed || native.isMetaPressed
-                    if (!hasModifier) return@onPreviewKeyEvent false
+                    if (!hasModifier && native.keyCode !in NON_TEXT_KEYS) return@onPreviewKeyEvent false
                     if (event.type == KeyEventType.KeyDown) {
                         HidKeyMap.forAndroidKey(native.keyCode, native.metaState)?.let(hid::pressKey)
                     }
