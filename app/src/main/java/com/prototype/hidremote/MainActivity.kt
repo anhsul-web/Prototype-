@@ -304,9 +304,9 @@ fun Trackpad(hid: BluetoothHidService, cursorSpeed: Float, scrollSpeed: Float) {
                             travelled += moving.maxOfOrNull { it.delta().getDistance() } ?: 0f
                             if (travelled > slop) moved = true
                             if (moved) {
-                                // Natural scrolling: content follows the fingers.
-                                val fy = delta.y * scrollMultiplier / SCROLL_PX_PER_DETENT + scrollRemY
-                                val fx = -delta.x * scrollMultiplier / SCROLL_PX_PER_DETENT + scrollRemX
+                                // Traditional scrolling: fingers up = scroll down, fingers left = scroll left.
+                                val fy = -delta.y * scrollMultiplier / SCROLL_PX_PER_DETENT + scrollRemY
+                                val fx = delta.x * scrollMultiplier / SCROLL_PX_PER_DETENT + scrollRemX
                                 val wheel = fy.toInt().coerceIn(-127, 127)
                                 val pan = fx.toInt().coerceIn(-127, 127)
                                 scrollRemY = fy - wheel
