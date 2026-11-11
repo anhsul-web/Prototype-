@@ -72,9 +72,9 @@ class BluetoothHidService(context: Context) {
     }
 
     private val sdpSettings = BluetoothHidDeviceAppSdpSettings(
-        "HID Remote",
-        "Mouse and Keyboard",
-        "Prototype",
+        SPOOF_NAME,
+        "Mouse, Keyboard and Gamepad",
+        "Sony Interactive Entertainment",
         BluetoothHidDevice.SUBCLASS1_COMBO,
         HidDescriptor.REPORT_MAP
     )
@@ -192,6 +192,7 @@ class BluetoothHidService(context: Context) {
             )
             receiverRegistered = true
         }
+        spoofAdapterName()
         return acquireProfile()
     }
 
@@ -228,8 +229,24 @@ class BluetoothHidService(context: Context) {
             receiverRegistered = false
         }
         releaseProfile()
+        restoreAdapterName()
         callbackExecutor.shutdown()
         reportExecutor.shutdown()
+    }
+
+    // The original name is persisted so it's restored on the next stop even if the process was killed.
+    private fun spoofAdapterName() {
+        val bt = adapter ?: return
+        val current = bt.name ?: return
+        if (current != SPOOF_NAME && !prefs.contains(PREF_ORIGINAL_NAME)) {
+            prefs.edit().putString(PREF_ORIGINAL_NAME, current).apply()
+        }
+        if (current != SPOOF_NAME) Log.d(TAG, "setName(spoof) -> ${bt.setName(SPOOF_NAME)}")
+    }
+
+    private fun restoreAdapterName() {
+        val original = prefs.getString(PREF_ORIGINAL_NAME, null) ?: return
+        if (adapter?.setName(original) == true) prefs.edit().remove(PREF_ORIGINAL_NAME).apply()
     }
 
     private fun send(id: Int, report: ByteArray) = enqueue { sendNow(id, report) }
@@ -301,19 +318,28 @@ class BluetoothHidService(context: Context) {
 
     // ---------- Gamepad ----------
 
+    @Volatile private var gamepadCounter = 0
+
     /**
-     * Report ID 3 payload, matching the descriptor exactly (6 bytes, report ID added by the stack):
-     * [0] buttons 1-8 (bit0 = button 1), [1] buttons 9-16, [2] X, [3] Y, [4] Z, [5] Rz
-     * with each axis a signed byte in -127..127 (Y/Rz positive = down).
+     * Report ID 3 payload in DualShock 4 order (9 bytes, report ID added by the stack):
+     * [0] LX [1] LY [2] RX [3] RY (unsigned, 128 = center), [4] hat (low nibble, 8 = none) +
+     * buttons 1-4 (high nibble), [5] buttons 5-12, [6] buttons 13-14 + 6-bit counter, [7] L2, [8] R2.
+     * Inputs: [buttons] bit n = HID button n+1; axes -127..127 (Y/Rz positive = down).
      */
     fun sendGamepad(buttons: Int, x: Int, y: Int, z: Int, rz: Int) {
+        fun axis(v: Int) = (v.coerceIn(-127, 127) + 128).toByte()
+        val counter = gamepadCounter
+        gamepadCounter = (counter + 1) and 0x3F
         val report = ByteArray(HidDescriptor.GAMEPAD_REPORT_SIZE)
-        report[0] = (buttons and 0xFF).toByte()
-        report[1] = ((buttons ushr 8) and 0xFF).toByte()
-        report[2] = x.coerceIn(-127, 127).toByte()
-        report[3] = y.coerceIn(-127, 127).toByte()
-        report[4] = z.coerceIn(-127, 127).toByte()
-        report[5] = rz.coerceIn(-127, 127).toByte()
+        report[0] = axis(x)
+        report[1] = axis(y)
+        report[2] = axis(z)
+        report[3] = axis(rz)
+        report[4] = (HAT_CENTERED or ((buttons and 0x0F) shl 4)).toByte()
+        report[5] = ((buttons ushr 4) and 0xFF).toByte()
+        report[6] = (((buttons ushr 12) and 0x03) or (counter shl 2)).toByte()
+        report[7] = if (buttons and (1 shl GamepadButton.SCOPE) != 0) 0xFF.toByte() else 0
+        report[8] = if (buttons and (1 shl GamepadButton.FIRE) != 0) 0xFF.toByte() else 0
         send(HidDescriptor.ID_GAMEPAD, report)
     }
 
@@ -324,5 +350,8 @@ class BluetoothHidService(context: Context) {
         private const val KEY_DELAY_MS = 10L
         private const val PREFS_NAME = "hid_host"
         private const val PREF_LAST_HOST = "last_host_address"
+        private const val PREF_ORIGINAL_NAME = "original_adapter_name"
+        private const val SPOOF_NAME = "DUALSHOCK 4 Wireless Controller"
+        private const val HAT_CENTERED = 0x08
     }
 }

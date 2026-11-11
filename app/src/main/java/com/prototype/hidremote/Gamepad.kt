@@ -35,16 +35,16 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import kotlin.math.roundToInt
 
-/** Bit index in the gamepad button mask (bit n = HID button n + 1), Xbox-style order. */
+/** Bit index in the gamepad button mask (bit n = HID button n + 1), DualShock 4 order. */
 object GamepadButton {
-    const val A = 0
-    const val B = 1
-    const val X = 2
-    const val Y = 3
-    const val LB = 4
-    const val RB = 5
-    const val SCOPE = 6 // LT
-    const val FIRE = 7  // RT
+    const val X = 0     // Square
+    const val A = 1     // Cross
+    const val B = 2     // Circle
+    const val Y = 3     // Triangle
+    const val LB = 4    // L1
+    const val RB = 5    // R1
+    const val SCOPE = 6 // L2
+    const val FIRE = 7  // R2
 }
 
 /** Aggregates every control into one gamepad report and sends it whenever anything changes. */
