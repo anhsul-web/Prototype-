@@ -208,11 +208,18 @@ fun Trackpad(hid: BluetoothHidService) {
                         if (moved) {
                             val fx = delta.x * SENSITIVITY + remX
                             val fy = delta.y * SENSITIVITY + remY
-                            val dx = fx.roundToInt().coerceIn(-127, 127)
-                            val dy = fy.roundToInt().coerceIn(-127, 127)
+                            var dx = fx.roundToInt()
+                            var dy = fy.roundToInt()
                             remX = fx - dx
                             remY = fy - dy
-                            if (dx != 0 || dy != 0) hid.mouseMove(dx, dy)
+                            // Split large deltas into multiple reports (each axis is limited to ±127).
+                            while (dx != 0 || dy != 0) {
+                                val stepX = dx.coerceIn(-127, 127)
+                                val stepY = dy.coerceIn(-127, 127)
+                                hid.mouseMove(stepX, stepY)
+                                dx -= stepX
+                                dy -= stepY
+                            }
                         }
                         change.consume()
                         if (!change.pressed) break
