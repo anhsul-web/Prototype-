@@ -83,6 +83,11 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onStart() {
+        super.onStart()
+        hid.ensureRegistered()
+    }
+
     override fun onDestroy() {
         hid.stop()
         super.onDestroy()
@@ -151,9 +156,10 @@ fun HidApp(hid: BluetoothHidService) {
         hid.start()
     }
 
-    // Once the HID app is registered, make the phone discoverable so a host can pair with it.
+    // Once the HID app is registered, make the phone discoverable so a new host can pair with it.
+    // Skipped when a bonded host exists: the service reconnects to it directly.
     LaunchedEffect(registered) {
-        if (registered && connectionState != BluetoothProfile.STATE_CONNECTED) {
+        if (registered && connectionState != BluetoothProfile.STATE_CONNECTED && hid.knownHost == null) {
             discoverableLauncher.launch(
                 Intent(BluetoothAdapter.ACTION_REQUEST_DISCOVERABLE)
                     .putExtra(BluetoothAdapter.EXTRA_DISCOVERABLE_DURATION, 120)

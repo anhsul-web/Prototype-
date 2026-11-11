@@ -8,7 +8,11 @@ import android.bluetooth.BluetoothHidDeviceAppQosSettings
 import android.bluetooth.BluetoothHidDeviceAppSdpSettings
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import androidx.core.content.ContextCompat
 import android.util.Log
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -33,6 +37,9 @@ class BluetoothHidService(context: Context) {
     private var hidDevice: BluetoothHidDevice? = null
     @Volatile private var hostDevice: BluetoothDevice? = null
     @Volatile private var stopped = false
+    @Volatile private var started = false
+    private var receiverRegistered = false
+    private val prefs = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
     private val _connectionState = MutableStateFlow(BluetoothProfile.STATE_DISCONNECTED)
     val connectionState: StateFlow<Int> = _connectionState.asStateFlow()
@@ -41,6 +48,23 @@ class BluetoothHidService(context: Context) {
     val registered: StateFlow<Boolean> = _registered.asStateFlow()
 
     val isBluetoothEnabled: Boolean get() = adapter?.isEnabled == true
+
+    /** A previously connected host that is still bonded; we reconnect to it after (re)registration. */
+    val knownHost: BluetoothDevice?
+        get() {
+            val address = prefs.getString(PREF_LAST_HOST, null) ?: return null
+            return adapter?.bondedDevices?.firstOrNull { it.address == address }
+        }
+
+    // Re-acquire the profile when Bluetooth comes back on; drop it cleanly when it turns off.
+    private val bluetoothStateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            when (intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR)) {
+                BluetoothAdapter.STATE_TURNING_OFF, BluetoothAdapter.STATE_OFF -> releaseProfile()
+                BluetoothAdapter.STATE_ON -> if (started && !stopped) acquireProfile()
+            }
+        }
+    }
 
     private val sdpSettings = BluetoothHidDeviceAppSdpSettings(
         "HID Remote",
@@ -62,20 +86,34 @@ class BluetoothHidService(context: Context) {
             Log.d(TAG, "onAppStatusChanged registered=$registered plugged=$pluggedDevice")
             _registered.value = registered
             if (!registered) {
+                // Also happens when Android unregisters a backgrounded app; ensureRegistered() restores it.
                 hostDevice = null
                 _connectionState.value = BluetoothProfile.STATE_DISCONNECTED
-            } else if (pluggedDevice != null) {
-                hidDevice?.connect(pluggedDevice)
+            } else if (hostDevice == null) {
+                // Device-initiated reconnect to the last host (hosts like Windows wait for the device).
+                (pluggedDevice ?: knownHost)?.let { hidDevice?.connect(it) }
             }
         }
 
         override fun onConnectionStateChanged(device: BluetoothDevice, state: Int) {
             Log.d(TAG, "onConnectionStateChanged $device state=$state")
             when (state) {
-                BluetoothProfile.STATE_CONNECTED -> hostDevice = device
-                BluetoothProfile.STATE_DISCONNECTED -> if (hostDevice == device) hostDevice = null
+                BluetoothProfile.STATE_CONNECTED -> {
+                    hostDevice = device
+                    prefs.edit().putString(PREF_LAST_HOST, device.address).apply()
+                    _connectionState.value = state
+                }
+                BluetoothProfile.STATE_CONNECTING -> {
+                    if (hostDevice == null) _connectionState.value = state
+                }
+                BluetoothProfile.STATE_DISCONNECTED, BluetoothProfile.STATE_DISCONNECTING -> {
+                    // Ignore other devices dropping (e.g. a failed reconnect attempt) while a host is live.
+                    if (hostDevice == null || hostDevice == device) {
+                        hostDevice = null
+                        _connectionState.value = state
+                    }
+                }
             }
-            _connectionState.value = state
         }
 
         override fun onGetReport(device: BluetoothDevice, type: Byte, id: Byte, bufferSize: Int) {
@@ -111,8 +149,7 @@ class BluetoothHidService(context: Context) {
                 return
             }
             hidDevice = device
-            val ok = device.registerApp(sdpSettings, null, qosOut, callbackExecutor, hidCallback)
-            Log.d(TAG, "registerApp -> $ok")
+            register(device)
         }
 
         override fun onServiceDisconnected(profile: Int) {
@@ -124,15 +161,41 @@ class BluetoothHidService(context: Context) {
         }
     }
 
+    private fun register(device: BluetoothHidDevice) {
+        val ok = device.registerApp(sdpSettings, null, qosOut, callbackExecutor, hidCallback)
+        Log.d(TAG, "registerApp -> $ok")
+    }
+
     fun start(): Boolean {
         if (stopped) return false
+        started = true
+        if (!receiverRegistered) {
+            ContextCompat.registerReceiver(
+                appContext,
+                bluetoothStateReceiver,
+                IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED),
+                ContextCompat.RECEIVER_NOT_EXPORTED
+            )
+            receiverRegistered = true
+        }
+        return acquireProfile()
+    }
+
+    /** Call when the UI returns to the foreground: re-registers if Android dropped the app. */
+    fun ensureRegistered() {
+        if (!started || stopped || !isBluetoothEnabled) return
+        val device = hidDevice
+        if (device == null) acquireProfile() else if (!_registered.value) register(device)
+    }
+
+    private fun acquireProfile(): Boolean {
         if (hidDevice != null) return true
         val bt = adapter ?: return false
         return bt.getProfileProxy(appContext, serviceListener, BluetoothProfile.HID_DEVICE)
     }
 
-    fun stop() {
-        stopped = true
+    /** Unregisters the SDP record and closes the proxy so the next registration starts clean. */
+    private fun releaseProfile() {
         hidDevice?.let { device ->
             hostDevice?.let { device.disconnect(it) }
             device.unregisterApp()
@@ -142,6 +205,15 @@ class BluetoothHidService(context: Context) {
         hostDevice = null
         _registered.value = false
         _connectionState.value = BluetoothProfile.STATE_DISCONNECTED
+    }
+
+    fun stop() {
+        stopped = true
+        if (receiverRegistered) {
+            appContext.unregisterReceiver(bluetoothStateReceiver)
+            receiverRegistered = false
+        }
+        releaseProfile()
         callbackExecutor.shutdown()
         reportExecutor.shutdown()
     }
@@ -215,19 +287,20 @@ class BluetoothHidService(context: Context) {
 
     // ---------- Gamepad ----------
 
-    /** [buttons] bit n = HID button n+1; axes are -127..127 (Y/Rz positive = down). */
+    /**
+     * Report ID 3 payload, matching the descriptor exactly (6 bytes, report ID added by the stack):
+     * [0] buttons 1-8 (bit0 = button 1), [1] buttons 9-16, [2] X, [3] Y, [4] Z, [5] Rz
+     * with each axis a signed byte in -127..127 (Y/Rz positive = down).
+     */
     fun sendGamepad(buttons: Int, x: Int, y: Int, z: Int, rz: Int) {
-        send(
-            HidDescriptor.ID_GAMEPAD,
-            byteArrayOf(
-                (buttons and 0xFF).toByte(),
-                ((buttons shr 8) and 0xFF).toByte(),
-                x.coerceIn(-127, 127).toByte(),
-                y.coerceIn(-127, 127).toByte(),
-                z.coerceIn(-127, 127).toByte(),
-                rz.coerceIn(-127, 127).toByte()
-            )
-        )
+        val report = ByteArray(HidDescriptor.GAMEPAD_REPORT_SIZE)
+        report[0] = (buttons and 0xFF).toByte()
+        report[1] = ((buttons ushr 8) and 0xFF).toByte()
+        report[2] = x.coerceIn(-127, 127).toByte()
+        report[3] = y.coerceIn(-127, 127).toByte()
+        report[4] = z.coerceIn(-127, 127).toByte()
+        report[5] = rz.coerceIn(-127, 127).toByte()
+        send(HidDescriptor.ID_GAMEPAD, report)
     }
 
     companion object {
@@ -235,5 +308,7 @@ class BluetoothHidService(context: Context) {
         const val BUTTON_LEFT = 0x01
         const val BUTTON_RIGHT = 0x02
         private const val KEY_DELAY_MS = 10L
+        private const val PREFS_NAME = "hid_host"
+        private const val PREF_LAST_HOST = "last_host_address"
     }
 }
