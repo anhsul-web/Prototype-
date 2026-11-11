@@ -47,6 +47,11 @@ class BluetoothHidService(context: Context) {
     private val _registered = MutableStateFlow(false)
     val registered: StateFlow<Boolean> = _registered.asStateFlow()
 
+    // True when there is no bonded host to reconnect to, or the reconnect attempt failed.
+    private val _needsPairing = MutableStateFlow(false)
+    val needsPairing: StateFlow<Boolean> = _needsPairing.asStateFlow()
+    @Volatile private var reconnectTarget: BluetoothDevice? = null
+
     val isBluetoothEnabled: Boolean get() = adapter?.isEnabled == true
 
     /** A previously connected host that is still bonded; we reconnect to it after (re)registration. */
@@ -91,7 +96,9 @@ class BluetoothHidService(context: Context) {
                 _connectionState.value = BluetoothProfile.STATE_DISCONNECTED
             } else if (hostDevice == null) {
                 // Device-initiated reconnect to the last host (hosts like Windows wait for the device).
-                (pluggedDevice ?: knownHost)?.let { hidDevice?.connect(it) }
+                val target = pluggedDevice ?: knownHost
+                reconnectTarget = target
+                _needsPairing.value = target == null || hidDevice?.connect(target) != true
             }
         }
 
@@ -100,6 +107,8 @@ class BluetoothHidService(context: Context) {
             when (state) {
                 BluetoothProfile.STATE_CONNECTED -> {
                     hostDevice = device
+                    reconnectTarget = null
+                    _needsPairing.value = false
                     prefs.edit().putString(PREF_LAST_HOST, device.address).apply()
                     _connectionState.value = state
                 }
@@ -111,6 +120,10 @@ class BluetoothHidService(context: Context) {
                     if (hostDevice == null || hostDevice == device) {
                         hostDevice = null
                         _connectionState.value = state
+                    }
+                    if (state == BluetoothProfile.STATE_DISCONNECTED && device == reconnectTarget) {
+                        reconnectTarget = null
+                        _needsPairing.value = true
                     }
                 }
             }

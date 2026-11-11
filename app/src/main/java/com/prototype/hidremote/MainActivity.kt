@@ -156,10 +156,10 @@ fun HidApp(hid: BluetoothHidService) {
         hid.start()
     }
 
-    // Once the HID app is registered, make the phone discoverable so a new host can pair with it.
-    // Skipped when a bonded host exists: the service reconnects to it directly.
-    LaunchedEffect(registered) {
-        if (registered && connectionState != BluetoothProfile.STATE_CONNECTED && hid.knownHost == null) {
+    // Make the phone discoverable when there's no bonded host to reconnect to, or reconnecting failed.
+    val needsPairing by hid.needsPairing.collectAsState()
+    LaunchedEffect(registered, needsPairing) {
+        if (registered && needsPairing && connectionState != BluetoothProfile.STATE_CONNECTED) {
             discoverableLauncher.launch(
                 Intent(BluetoothAdapter.ACTION_REQUEST_DISCOVERABLE)
                     .putExtra(BluetoothAdapter.EXTRA_DISCOVERABLE_DURATION, 120)
