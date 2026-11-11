@@ -239,10 +239,9 @@ class BluetoothHidService(context: Context) {
     private fun spoofAdapterName() {
         val bt = adapter ?: return
         val current = bt.name ?: return
-        if (current != SPOOF_NAME && !prefs.contains(PREF_ORIGINAL_NAME)) {
-            prefs.edit().putString(PREF_ORIGINAL_NAME, current).apply()
-        }
-        if (current != SPOOF_NAME) Log.d(TAG, "setName(spoof) -> ${bt.setName(SPOOF_NAME)}")
+        if (current == SPOOF_NAME) return // Still spoofed from a killed session; keep the saved original.
+        prefs.edit().putString(PREF_ORIGINAL_NAME, current).apply()
+        Log.d(TAG, "setName(spoof) -> ${bt.setName(SPOOF_NAME)}")
     }
 
     private fun restoreAdapterName() {
