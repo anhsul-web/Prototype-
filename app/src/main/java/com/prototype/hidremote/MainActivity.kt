@@ -300,7 +300,8 @@ fun Trackpad(hid: BluetoothHidService, cursorSpeed: Float, scrollSpeed: Float) {
                             val moving = pressed.filter { it.previousPressed }
                             val delta = if (moving.isEmpty()) Offset.Zero
                             else moving.fold(Offset.Zero) { acc, c -> acc + c.delta() } / moving.size.toFloat()
-                            travelled += delta.getDistance()
+                            // Use the farthest-moving finger so a pinch (canceling average) is not a tap.
+                            travelled += moving.maxOfOrNull { it.delta().getDistance() } ?: 0f
                             if (travelled > slop) moved = true
                             if (moved) {
                                 // Natural scrolling: content follows the fingers.
