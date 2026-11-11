@@ -138,7 +138,8 @@ class BluetoothHidService(context: Context) {
                 else -> 0
             }
             if (type == BluetoothHidDevice.REPORT_TYPE_INPUT && size > 0) {
-                hidDevice?.replyReport(device, type, id, ByteArray(size))
+                val report = if (id.toInt() == HidDescriptor.ID_GAMEPAD) buildGamepadReport(0, 0, 0, 0, 0) else ByteArray(size)
+                hidDevice?.replyReport(device, type, id, report)
             } else {
                 hidDevice?.reportError(device, BluetoothHidDevice.ERROR_RSP_INVALID_RPT_ID)
             }
@@ -326,7 +327,10 @@ class BluetoothHidService(context: Context) {
      * buttons 1-4 (high nibble), [5] buttons 5-12, [6] buttons 13-14 + 6-bit counter, [7] L2, [8] R2.
      * Inputs: [buttons] bit n = HID button n+1; axes -127..127 (Y/Rz positive = down).
      */
-    fun sendGamepad(buttons: Int, x: Int, y: Int, z: Int, rz: Int) {
+    fun sendGamepad(buttons: Int, x: Int, y: Int, z: Int, rz: Int) =
+        send(HidDescriptor.ID_GAMEPAD, buildGamepadReport(buttons, x, y, z, rz))
+
+    private fun buildGamepadReport(buttons: Int, x: Int, y: Int, z: Int, rz: Int): ByteArray {
         fun axis(v: Int) = (v.coerceIn(-127, 127) + 128).toByte()
         val counter = gamepadCounter
         gamepadCounter = (counter + 1) and 0x3F
@@ -340,7 +344,7 @@ class BluetoothHidService(context: Context) {
         report[6] = (((buttons ushr 12) and 0x03) or (counter shl 2)).toByte()
         report[7] = if (buttons and (1 shl GamepadButton.SCOPE) != 0) 0xFF.toByte() else 0
         report[8] = if (buttons and (1 shl GamepadButton.FIRE) != 0) 0xFF.toByte() else 0
-        send(HidDescriptor.ID_GAMEPAD, report)
+        return report
     }
 
     companion object {
