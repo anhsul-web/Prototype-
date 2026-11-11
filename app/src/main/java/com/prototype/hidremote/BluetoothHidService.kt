@@ -247,7 +247,13 @@ class BluetoothHidService(context: Context) {
 
     private fun restoreAdapterName() {
         val original = prefs.getString(PREF_ORIGINAL_NAME, null) ?: return
-        if (adapter?.setName(original) == true) prefs.edit().remove(PREF_ORIGINAL_NAME).apply()
+        val bt = adapter ?: return
+        // The user renamed Bluetooth meanwhile: keep their choice.
+        if (bt.name != SPOOF_NAME) {
+            prefs.edit().remove(PREF_ORIGINAL_NAME).apply()
+            return
+        }
+        if (bt.setName(original)) prefs.edit().remove(PREF_ORIGINAL_NAME).apply()
     }
 
     private fun send(id: Int, report: ByteArray) = enqueue { sendNow(id, report) }
