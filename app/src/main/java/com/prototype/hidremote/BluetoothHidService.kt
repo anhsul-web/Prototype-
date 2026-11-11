@@ -174,7 +174,8 @@ class BluetoothHidService(context: Context) {
                 appContext,
                 bluetoothStateReceiver,
                 IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED),
-                ContextCompat.RECEIVER_NOT_EXPORTED
+                // Sent by the Bluetooth app (not system_server); it's a protected broadcast, so exporting is safe.
+                ContextCompat.RECEIVER_EXPORTED
             )
             receiverRegistered = true
         }
