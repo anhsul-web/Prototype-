@@ -31,6 +31,7 @@ class BluetoothHidService(context: Context) {
 
     private var hidDevice: BluetoothHidDevice? = null
     @Volatile private var hostDevice: BluetoothDevice? = null
+    @Volatile private var stopped = false
 
     private val _connectionState = MutableStateFlow(BluetoothProfile.STATE_DISCONNECTED)
     val connectionState: StateFlow<Int> = _connectionState.asStateFlow()
@@ -83,6 +84,10 @@ class BluetoothHidService(context: Context) {
         override fun onServiceConnected(profile: Int, proxy: BluetoothProfile) {
             if (profile != BluetoothProfile.HID_DEVICE) return
             val device = proxy as BluetoothHidDevice
+            if (stopped) {
+                adapter?.closeProfileProxy(BluetoothProfile.HID_DEVICE, device)
+                return
+            }
             hidDevice = device
             val ok = device.registerApp(sdpSettings, null, null, callbackExecutor, hidCallback)
             Log.d(TAG, "registerApp -> $ok")
@@ -98,12 +103,14 @@ class BluetoothHidService(context: Context) {
     }
 
     fun start(): Boolean {
+        if (stopped) return false
         if (hidDevice != null) return true
         val bt = adapter ?: return false
         return bt.getProfileProxy(appContext, serviceListener, BluetoothProfile.HID_DEVICE)
     }
 
     fun stop() {
+        stopped = true
         hidDevice?.let { device ->
             hostDevice?.let { device.disconnect(it) }
             device.unregisterApp()
